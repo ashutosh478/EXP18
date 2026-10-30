@@ -1,0 +1,67 @@
+name: Iris ML CI/CD
+
+on:
+  push:
+    branches: [main, master]
+    tags: ["v*"]
+  pull_request:
+    branches: [main, master]
+
+permissions:
+  contents: read
+
+jobs:
+  train-test-and-package:
+    name: Train, validate, and package model
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: python -m pip install -r requirements.txt
+
+      - name: Train and validate model
+        run: python train.py
+
+      - name: Run automated tests
+        run: pytest -q
+
+      - name: Publish model artifact for this workflow run
+        uses: actions/upload-artifact@v7
+        with:
+          name: iris-model-${{ github.sha }}
+          path: artifacts/
+          if-no-files-found: error
+          retention-days: 14
+
+  deploy-model-release:
+    name: Publish versioned model release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: train-test-and-package
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download validated model artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: iris-model-${{ github.sha }}
+          path: release-files/
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: >-
+          gh release create "$GITHUB_REF_NAME"
+          release-files/iris_model.joblib
+          release-files/metrics.json
+          release-files/model_metadata.json
+          --title "Iris Model $GITHUB_REF_NAME"
+          --generate-notes
